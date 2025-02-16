@@ -1,0 +1,12 @@
+[package]
+name = "nso-db"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+chrono = { version = "0.4.39", features = ["serde"] }
+serde = { version = "1.0.217", features = ["derive"] }
+serde_json = "1.0.138"
+
+[workspace]
+members = ["crates/sfrom"]
