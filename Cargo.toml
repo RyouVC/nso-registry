@@ -2,6 +2,10 @@
 name = "nso-db"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+authors = ["Cappy Ishihara <cappy@cappuchino.xyz>"]
+description = "Library for parsing Nintendo Switch Online ROM databases"
+repository = "https://github.com/korewaChino/nso-registry"
 
 [dependencies]
 chrono = { version = "0.4.39", features = ["serde"] }
