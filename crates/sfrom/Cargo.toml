@@ -10,3 +10,4 @@ repository = "https://github.com/korewaChino/nso-registry"
 
 [dependencies]
 nom = "8.0.0"
+thiserror = "2.0.11"

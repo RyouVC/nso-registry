@@ -16,7 +16,7 @@ pub struct SfromHeader {
     pub footer_location: u32,
     pub sdd1_data_offset: u32,
     pub reserved1: u32, // 0x00000000
-    // unknown flag
+    // 
     pub unknown1: u32,
     // 0x8
     pub wiiu_game_id: [u8; 8],
@@ -80,22 +80,19 @@ pub enum EnhancementChip {
 
 impl SfromHeader {
     pub fn parse(input: &[u8]) -> IResult<&[u8], Self> {
-        let (
-            input,
-            (
-                magic,
-                file_size,
-                rom_location,
-                pcm_samples_location,
-                pcm_footer_location,
-                footer_location,
-                sdd1_data_offset,
-                reserved1,
-                unknown1,
-                wiiu_game_id,
-                reserved2,
-            ),
-        ) = tuple((
+        let (input, (
+            magic,
+            file_size,
+            rom_location,
+            pcm_samples_location,
+            pcm_footer_location,
+            footer_location,
+            sdd1_data_offset,
+            reserved1,
+            unknown1,
+            wiiu_game_id,
+            reserved2,
+        )) = tuple((
             le_u32,
             le_u32,
             le_u32,
@@ -109,24 +106,22 @@ impl SfromHeader {
             le_u32,
         ))(input)?;
 
-        Ok((
-            input,
-            SfromHeader {
-                magic,
-                file_size,
-                rom_location,
-                pcm_samples_location,
-                pcm_footer_location,
-                footer_location,
-                sdd1_data_offset,
-                reserved1,
-                unknown1,
-                wiiu_game_id: wiiu_game_id.try_into().unwrap(),
-                reserved2,
-            },
-        ))
+        Ok((input, SfromHeader {
+            magic,
+            file_size,
+            rom_location,
+            pcm_samples_location,
+            pcm_footer_location,
+            footer_location,
+            sdd1_data_offset,
+            reserved1,
+            unknown1,
+            wiiu_game_id: wiiu_game_id.try_into().unwrap(),
+            reserved2,
+        }))
     }
 }
+
 
 impl SfromFooter {
     pub fn parse(input: &[u8]) -> IResult<&[u8], Self> {
@@ -261,174 +256,144 @@ pub fn parse_sfrom(input: &[u8]) -> IResult<&[u8], (SfromHeader, SfromFooter, Ga
 pub struct Sfrom {
     pub header: SfromHeader,
     pub rom_data: Vec<u8>,
-    pub pcm_data: Option<Vec<u8>>,
-    pub pcm_footer: Option<Vec<u8>>,
+    // pub pcm_data: Option<Vec<u8>>,
+    // pub pcm_footer: Option<Vec<u8>>,
     pub footer: SfromFooter,
     pub game_tags: GameTagData,
 }
 
 impl Sfrom {
+    pub fn parse_debug(input: &[u8]) -> IResult<&[u8], SfromHeader> {
+        let (input, header) = SfromHeader::parse(input)?;
+        Ok((input, header))
+    }
     pub fn parse(input: &[u8]) -> IResult<&[u8], Self> {
         // First parse the header
-        let (input, header) = SfromHeader::parse(input)?;
-
-        // Extract ROM data from the specified offset to PCM samples location
-        // (or footer location if no PCM data)
-        let rom_end = if header.pcm_samples_location != header.footer_location {
-            header.pcm_samples_location as usize
-        } else {
-            header.footer_location as usize
-        };
-
-        // let rom_size = rom_end - header.rom_location as usize;
-        let rom_start = header.rom_location as usize;
-
-        // Ensure we have enough data
-        if input.len() < rom_end {
-            return Err(nom::Err::Error(nom::error::Error::new(
-                input,
-                nom::error::ErrorKind::Eof,
-            )));
-        }
-
-        // Extract ROM data
+        let (_, header) = SfromHeader::parse(input)?;
+        
+        // println!("{:#?}", header);
+        
+        let rom_start = (header.rom_location & 0xFF) as usize;
+        let rom_end = (header.footer_location & 0xFF) as usize;
         let rom_data = input[rom_start..rom_end].to_vec();
-
-        // Extract PCM data if present
-        let (pcm_data, pcm_footer) = if header.pcm_samples_location != header.footer_location {
-            let pcm_start = header.pcm_samples_location as usize;
-            let pcm_end = header.pcm_footer_location as usize;
-            let pcm_data = input[pcm_start..pcm_end].to_vec();
-
-            let pcm_footer_start = header.pcm_footer_location as usize;
-            let pcm_footer_end = header.footer_location as usize;
-            let pcm_footer = input[pcm_footer_start..pcm_footer_end].to_vec();
-
-            (Some(pcm_data), Some(pcm_footer))
-        } else {
-            (None, None)
-        };
-
-        // Move to footer position
-        let footer_pos = header.footer_location as usize;
-        let footer_input = &input[footer_pos..];
-
-        // Parse footer and game tags
-        let (remaining, footer) = SfromFooter::parse(footer_input)?;
-        let (remaining, game_tags) = GameTagData::parse(remaining)?;
-
+        
+        // Parse footer starting from footer_location
+        let (remaining, footer) = SfromFooter::parse(&input[rom_end..])?;
+        
+        // Parse game tags from the remaining data
+        let (_, game_tags) = GameTagData::parse(remaining)?;
+        
+        
         Ok((
-            remaining,
-            Sfrom {
+            &input[rom_end..],
+            Self {
                 header,
                 rom_data,
-                pcm_data,
-                pcm_footer,
                 footer,
                 game_tags,
             },
         ))
     }
 
-    pub fn write<W: Write + Seek>(&self, writer: &mut W) -> io::Result<()> {
-        // Calculate all the necessary offsets and sizes first
-        let header_size = 0x30; // Standard header size
-        let rom_start = header_size;
-        let rom_end = rom_start + self.rom_data.len();
+    // pub fn write<W: Write + Seek>(&self, writer: &mut W) -> io::Result<()> {
+    //     // Calculate all the necessary offsets and sizes first
+    //     let header_size = 0x30; // Standard header size
+    //     let rom_start = header_size;
+    //     let rom_end = rom_start + self.rom_data.len();
 
-        let (pcm_start, pcm_footer_start, footer_start) =
-            if let (Some(pcm), Some(pcm_footer)) = (&self.pcm_data, &self.pcm_footer) {
-                (
-                    rom_end,
-                    rom_end + pcm.len(),
-                    rom_end + pcm.len() + pcm_footer.len(),
-                )
-            } else {
-                (rom_end, rom_end, rom_end)
-            };
+    //     let (pcm_start, pcm_footer_start, footer_start) =
+    //         if let (Some(pcm), Some(pcm_footer)) = (&self.pcm_data, &self.pcm_footer) {
+    //             (
+    //                 rom_end,
+    //                 rom_end + pcm.len(),
+    //                 rom_end + pcm.len() + pcm_footer.len(),
+    //             )
+    //         } else {
+    //             (rom_end, rom_end, rom_end)
+    //         };
 
-        // Calculate game tags size
-        let mut game_tags_size = 0;
-        if self.game_tags.armet_threshold.is_some() {
-            game_tags_size += 4;
-        }
-        if let Some(data) = &self.game_tags.sdd1_data {
-            game_tags_size += 4 + data.len();
-        }
-        // ... calculate sizes for other tags ...
+    //     // Calculate game tags size
+    //     let mut game_tags_size = 0;
+    //     if self.game_tags.armet_threshold.is_some() {
+    //         game_tags_size += 4;
+    //     }
+    //     if let Some(data) = &self.game_tags.sdd1_data {
+    //         game_tags_size += 4 + data.len();
+    //     }
+    //     // ... calculate sizes for other tags ...
 
-        let total_size = footer_start + 0x23 + game_tags_size;
+    //     let total_size = footer_start + 0x23 + game_tags_size;
 
-        // Seek to start and write header
-        writer.seek(SeekFrom::Start(0))?;
-        writer.write_all(&0x100u32.to_le_bytes())?; // magic
-        writer.write_all(&(total_size as u32).to_le_bytes())?;
-        writer.write_all(&(rom_start as u32).to_le_bytes())?;
-        writer.write_all(&(pcm_start as u32).to_le_bytes())?;
-        writer.write_all(&(pcm_footer_start as u32).to_le_bytes())?;
-        writer.write_all(&(footer_start as u32).to_le_bytes())?;
-        writer.write_all(&self.header.sdd1_data_offset.to_le_bytes())?;
-        writer.write_all(&0u32.to_le_bytes())?; // reserved1
-        writer.write_all(&self.header.unknown1.to_le_bytes())?;
-        writer.write_all(&self.header.wiiu_game_id)?;
-        writer.write_all(&0u32.to_le_bytes())?; // reserved2
+    //     // Seek to start and write header
+    //     writer.seek(SeekFrom::Start(0))?;
+    //     writer.write_all(&0x100u32.to_le_bytes())?; // magic
+    //     writer.write_all(&(total_size as u32).to_le_bytes())?;
+    //     writer.write_all(&(rom_start as u32).to_le_bytes())?;
+    //     writer.write_all(&(pcm_start as u32).to_le_bytes())?;
+    //     writer.write_all(&(pcm_footer_start as u32).to_le_bytes())?;
+    //     writer.write_all(&(footer_start as u32).to_le_bytes())?;
+    //     writer.write_all(&self.header.sdd1_data_offset.to_le_bytes())?;
+    //     writer.write_all(&0u32.to_le_bytes())?; // reserved1
+    //     writer.write_all(&self.header.unknown1.to_le_bytes())?;
+    //     writer.write_all(&self.header.wiiu_game_id)?;
+    //     writer.write_all(&0u32.to_le_bytes())?; // reserved2
 
-        // Seek to ROM start and write ROM data
-        writer.seek(SeekFrom::Start(rom_start as u64))?;
-        writer.write_all(&self.rom_data)?;
+    //     // Seek to ROM start and write ROM data
+    //     writer.seek(SeekFrom::Start(rom_start as u64))?;
+    //     writer.write_all(&self.rom_data)?;
 
-        // Write PCM data if present
-        if let (Some(pcm), Some(pcm_footer)) = (&self.pcm_data, &self.pcm_footer) {
-            writer.seek(SeekFrom::Start(pcm_start as u64))?;
-            writer.write_all(pcm)?;
-            writer.seek(SeekFrom::Start(pcm_footer_start as u64))?;
-            writer.write_all(pcm_footer)?;
-        }
+    //     // Write PCM data if present
+    //     if let (Some(pcm), Some(pcm_footer)) = (&self.pcm_data, &self.pcm_footer) {
+    //         writer.seek(SeekFrom::Start(pcm_start as u64))?;
+    //         writer.write_all(pcm)?;
+    //         writer.seek(SeekFrom::Start(pcm_footer_start as u64))?;
+    //         writer.write_all(pcm_footer)?;
+    //     }
 
-        // Seek to footer position and write footer
-        writer.seek(SeekFrom::Start(footer_start as u64))?;
-        writer.write_all(&[self.footer.fps])?;
-        writer.write_all(&self.footer.rom_size.to_le_bytes())?;
-        writer.write_all(&self.footer.pcm_samples_size.to_le_bytes())?;
-        writer.write_all(&self.footer.pcm_footer_size.to_le_bytes())?;
-        writer.write_all(&self.footer.preset_id.to_le_bytes())?;
-        writer.write_all(&[
-            self.footer.player_count,
-            self.footer.sound_volume,
-            self.footer.rom_type,
-            self.footer.enhancement_chip,
-        ])?;
-        writer.write_all(&self.footer.unknown1.to_le_bytes())?;
-        writer.write_all(&self.footer.unknown2.to_le_bytes())?;
+    //     // Seek to footer position and write footer
+    //     writer.seek(SeekFrom::Start(footer_start as u64))?;
+    //     writer.write_all(&[self.footer.fps])?;
+    //     writer.write_all(&self.footer.rom_size.to_le_bytes())?;
+    //     writer.write_all(&self.footer.pcm_samples_size.to_le_bytes())?;
+    //     writer.write_all(&self.footer.pcm_footer_size.to_le_bytes())?;
+    //     writer.write_all(&self.footer.preset_id.to_le_bytes())?;
+    //     writer.write_all(&[
+    //         self.footer.player_count,
+    //         self.footer.sound_volume,
+    //         self.footer.rom_type,
+    //         self.footer.enhancement_chip,
+    //     ])?;
+    //     writer.write_all(&self.footer.unknown1.to_le_bytes())?;
+    //     writer.write_all(&self.footer.unknown2.to_le_bytes())?;
 
-        // Write game tags immediately after footer
-        self.write_game_tags(writer)?;
+    //     // Write game tags immediately after footer
+    //     self.write_game_tags(writer)?;
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
-    fn write_game_tags<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        // Write tags in order
-        if let Some(threshold) = &self.game_tags.armet_threshold {
-            writer.write_all(b"A")?;
-            writer.write_all(threshold)?;
-        }
-        if let Some(data) = &self.game_tags.sdd1_data {
-            writer.write_all(b"D")?;
-            writer.write_all(&(data.len() as u32).to_le_bytes()[0..3])?;
-            writer.write_all(data)?;
-        }
-        // ... write other tags ...
+    // fn write_game_tags<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+    //     // Write tags in order
+    //     if let Some(threshold) = &self.game_tags.armet_threshold {
+    //         writer.write_all(b"A")?;
+    //         writer.write_all(threshold)?;
+    //     }
+    //     if let Some(data) = &self.game_tags.sdd1_data {
+    //         writer.write_all(b"D")?;
+    //         writer.write_all(&(data.len() as u32).to_le_bytes()[0..3])?;
+    //         writer.write_all(data)?;
+    //     }
+    //     // ... write other tags ...
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
-    pub fn save_to_file(&self, path: &str) -> io::Result<()> {
-        let mut file = std::fs::File::create(path)?;
+    // pub fn save_to_file(&self, path: &str) -> io::Result<()> {
+    //     let mut file = std::fs::File::create(path)?;
 
-        // Pre-allocate the file size
-        file.set_len(self.header.file_size as u64)?;
+    //     // Pre-allocate the file size
+    //     file.set_len(self.header.file_size as u64)?;
 
-        self.write(&mut file)
-    }
+    //     self.write(&mut file)
+    // }
 }
