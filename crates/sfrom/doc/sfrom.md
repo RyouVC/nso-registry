@@ -44,7 +44,7 @@ Format information for the `.sfrom` files used on the SNES Mini / SNES Classic.
 ## Header
 | Start | Size | Description                    | Notes                                                             |
 |-------|------|--------------------------------|-------------------------------------------------------------------|
-| 0x00  | 0x4  | 0x00000100                     |                                                                   |
+| 0x00  | 0x4  | 0x00010000                     |                                                                   |
 | 0x04  | 0x4  | File size                      | Includes the header and footer                                    |
 | 0x08  | 0x4  | Location of ROM                | Always 0x00000030 in official files                               |
 | 0x0C  | 0x4  | Location of PCM samples        | Comes after end of ROM in official files                          |

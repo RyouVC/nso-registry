@@ -1,10 +1,10 @@
-use std::io::{self, Seek, SeekFrom, Write};
 use nom::{
     bytes::complete::{tag, take},
     number::complete::{le_u16, le_u32, le_u8},
     sequence::tuple,
     IResult,
 };
+use std::io::{self, Seek, SeekFrom, Write};
 
 #[derive(Debug)]
 pub struct SfromHeader {
@@ -16,7 +16,7 @@ pub struct SfromHeader {
     pub footer_location: u32,
     pub sdd1_data_offset: u32,
     pub reserved1: u32, // 0x00000000
-    // 
+    //
     pub unknown1: u32,
     // 0x8
     pub wiiu_game_id: [u8; 8],
@@ -77,22 +77,24 @@ pub enum EnhancementChip {
     SuperFx = 0x0C,
 }
 
-
 impl SfromHeader {
     pub fn parse(input: &[u8]) -> IResult<&[u8], Self> {
-        let (input, (
-            magic,
-            file_size,
-            rom_location,
-            pcm_samples_location,
-            pcm_footer_location,
-            footer_location,
-            sdd1_data_offset,
-            reserved1,
-            unknown1,
-            wiiu_game_id,
-            reserved2,
-        )) = tuple((
+        let (
+            input,
+            (
+                magic,
+                file_size,
+                rom_location,
+                pcm_samples_location,
+                pcm_footer_location,
+                footer_location,
+                sdd1_data_offset,
+                reserved1,
+                unknown1,
+                wiiu_game_id,
+                reserved2,
+            ),
+        ) = tuple((
             le_u32,
             le_u32,
             le_u32,
@@ -106,22 +108,24 @@ impl SfromHeader {
             le_u32,
         ))(input)?;
 
-        Ok((input, SfromHeader {
-            magic,
-            file_size,
-            rom_location,
-            pcm_samples_location,
-            pcm_footer_location,
-            footer_location,
-            sdd1_data_offset,
-            reserved1,
-            unknown1,
-            wiiu_game_id: wiiu_game_id.try_into().unwrap(),
-            reserved2,
-        }))
+        Ok((
+            input,
+            SfromHeader {
+                magic,
+                file_size,
+                rom_location,
+                pcm_samples_location,
+                pcm_footer_location,
+                footer_location,
+                sdd1_data_offset,
+                reserved1,
+                unknown1,
+                wiiu_game_id: wiiu_game_id.try_into().unwrap(),
+                reserved2,
+            },
+        ))
     }
 }
-
 
 impl SfromFooter {
     pub fn parse(input: &[u8]) -> IResult<&[u8], Self> {
@@ -164,30 +168,8 @@ impl SfromFooter {
 }
 
 impl GameTagData {
-    fn parse_tag_a(input: &[u8]) -> IResult<&[u8], [u8; 3]> {
-        let (input, _) = tag("A")(input)?;
-        let (input, data) = take(3usize)(input)?;
-        Ok((input, data.try_into().unwrap()))
-    }
-
-    fn parse_tag_d(input: &[u8]) -> IResult<&[u8], Vec<u8>> {
-        let (input, _) = tag("D")(input)?;
-        let (input, size) = le_u24(input)?;
-        let (input, data) = take(size as usize)(input)?;
-        Ok((input, data.to_vec()))
-    }
-
-    fn parse_tag_g(input: &[u8]) -> IResult<&[u8], u16> {
-        let (input, _) = tag("G")(input)?;
-        let (input, _) = take(3usize)(input)?; // Skip 3 bytes
-        let (input, preset_id) = le_u16(input)?;
-        Ok((input, preset_id))
-    }
-
-    // Add more tag parsers as needed...
-
-    pub fn parse(input: &[u8]) -> IResult<&[u8], Self> {
-        let mut tag_data = GameTagData {
+    pub fn parse(input: &[u8]) -> Self {
+        let mut data = GameTagData {
             armet_threshold: None,
             sdd1_data: None,
             preset_id: None,
@@ -207,31 +189,122 @@ impl GameTagData {
             volume: None,
         };
 
-        let mut remaining = input;
-        while !remaining.is_empty() {
-            match remaining[0] as char {
-                'A' => {
-                    let (new_input, data) = Self::parse_tag_a(remaining)?;
-                    tag_data.armet_threshold = Some(data);
-                    remaining = new_input;
+        let mut i = 0;
+        while i < input.len() {
+            match input[i] {
+                0x41 => {
+                    // 'A'
+                    if i + 3 < input.len() {
+                        data.armet_threshold = Some([input[i + 1], input[i + 2], input[i + 3]]);
+                    }
+                    i += 4;
                 }
-                'D' => {
-                    let (new_input, data) = Self::parse_tag_d(remaining)?;
-                    tag_data.sdd1_data = Some(data);
-                    remaining = new_input;
+                0x44 => {
+                    // 'D'
+                    if i + 4 < input.len() {
+                        let size =
+                            u32::from_le_bytes([input[i + 1], input[i + 2], input[i + 3], 0]);
+                        if i + 4 + size as usize <= input.len() {
+                            data.sdd1_data = Some(input[i + 4..i + 4 + size as usize].to_vec());
+                        }
+                        i += 4 + size as usize;
+                    } else {
+                        i += 1;
+                    }
                 }
-                'G' => {
-                    let (new_input, data) = Self::parse_tag_g(remaining)?;
-                    tag_data.preset_id = Some(data);
-                    remaining = new_input;
+                0x47 => {
+                    // 'G'
+                    if i + 5 < input.len() {
+                        data.preset_id = Some(u16::from_le_bytes([input[i + 3], input[i + 4]]));
+                    }
+                    i += 5;
                 }
-                // Add more tag matches...
-                _ => break,
+                0x50 => {
+                    // 'P'
+                    if i + 7 < input.len() {
+                        data.flags = Some([
+                            input[i + 1],
+                            input[i + 2],
+                            input[i + 3],
+                            input[i + 4],
+                            input[i + 5],
+                            input[i + 6],
+                            input[i + 7],
+                        ]);
+                    }
+                    i += 7;
+                }
+                0x53 => {
+                    // 'S'
+                    if i + 3 < input.len() {
+                        data.unknown_s = Some([input[i + 1], input[i + 2], input[i + 3]]);
+                    }
+                    i += 3;
+                }
+                0x55 => {
+                    // 'U'
+                    if i + 5 < input.len() {
+                        data.superfx_clock = Some(u16::from_le_bytes([input[i + 3], input[i + 4]]));
+                    }
+                    i += 5;
+                }
+                0x61 => {
+                    data.armet_version = Some(input[i + 1]);
+                    i += 1;
+                } // 'a'
+                0x63 => {
+                    data.snes_header_location = Some(input[i + 1]);
+                    i += 1;
+                } // 'c'
+                0x64 => {
+                    data.unknown_d = Some(input[i + 1]);
+                    i += 1;
+                } // 'd'
+                0x65 => {
+                    data.enhancement_chip = Some(input[i + 1]);
+                    i += 1;
+                } // 'e'
+                0x68 => {
+                    data.resolution_ratio = Some(input[i + 1]);
+                    i += 1;
+                } // 'h'
+                0x6A => {
+                    data.unknown_j = Some(input[i + 1]);
+                    i += 1;
+                } // 'j'
+                0x6D => {
+                    data.mouse_flag = Some(input[i + 1]);
+                    i += 1;
+                } // 'm'
+                0x70 => {
+                    data.max_players = Some(input[i + 1]);
+                    i += 1;
+                } // 'p'
+                0x72 => {
+                    data.visible_height = Some(input[i + 1]);
+                    i += 1;
+                } // 'r'
+                0x74 => {
+                    data.unknown_t = Some(input[i + 1]);
+                    i += 1;
+                } // 't'
+                0x76 => {
+                    data.volume = Some(input[i + 1]);
+                    i += 1;
+                } // 'v'
+                _ => i += 1,
             }
         }
 
-        Ok((remaining, tag_data))
+        data
     }
+}
+
+#[derive(Debug)]
+pub struct SwitchSfromFooter {
+    pub game_tags: GameTagData,
+    pub game_info_size: u32,
+    pub magic: [u8; 4], // "Can1"
 }
 
 // Helper function for 24-bit little endian integers
@@ -242,158 +315,131 @@ fn le_u24(input: &[u8]) -> IResult<&[u8], u32> {
         bytes[0] as u32 | ((bytes[1] as u32) << 8) | ((bytes[2] as u32) << 16),
     ))
 }
-
-// Example usage
-pub fn parse_sfrom(input: &[u8]) -> IResult<&[u8], (SfromHeader, SfromFooter, GameTagData)> {
-    let (input, header) = SfromHeader::parse(input)?;
-    let (input, footer) = SfromFooter::parse(input)?;
-    let (input, game_tags) = GameTagData::parse(input)?;
-
-    Ok((input, (header, footer, game_tags)))
+#[derive(Debug)]
+pub enum SfromType {
+    Classic(SfromHeader),
+    NintendoSwitch(SwitchSfromFooter),
 }
 
+impl SfromType {
+    // check for the first 4 bytes for the magic header of
+    // 0x00000100
+    // If exists, is a Classic type.
+    //
+    // If not and it contains a normal SFC magic byte, it's
+    // an NSO ROM
+    pub fn from_bytes(input: &[u8]) -> IResult<&[u8], Self> {
+        // get the first 4 bytes
+        let (_input_discard, bytes) = take(4usize)(input)?;
+        //println!("First 4 bytes: {:X?}", bytes);
+        if bytes == [0x00, 0x01, 0x00, 0x00] {
+            println!("Detected SNES Mini/Classic SFROM, parsing header...");
+            let (input, header) = SfromHeader::parse(input)?;
+            Ok((input, Self::Classic(header)))
+        } else {
+            // Check last 4 bytes are Can1
+            let last_bytes = &input[input.len() - 4..];
+            if last_bytes == [0x43, 0x61, 0x6E, 0x31] {
+                println!("Detected Switch SFROM, parsing footer...");
+
+                // Get Game Info Data size (4 bytes before Can1)
+                let info_size_bytes = &input[input.len() - 8..input.len() - 4];
+                let info_size = u32::from_le_bytes(info_size_bytes.try_into().unwrap());
+
+                // Game Info Data starts at: input.len() - 8 - info_size
+                let info_start = input.len() - 8 - info_size as usize;
+                let info_data = input[info_start..info_start + info_size as usize].to_vec();
+
+                let footer = SwitchSfromFooter {
+                    game_tags: GameTagData::parse(&info_data),
+                    game_info_size: info_size,
+                    magic: [0x43, 0x61, 0x6E, 0x31], // "Can1"
+                };
+
+                Ok((input, Self::NintendoSwitch(footer)))
+            } else {
+                println!("Unknown file detected");
+                panic!("Unknown file format");
+            }
+        }
+    }
+}
 #[derive(Debug)]
 pub struct Sfrom {
-    pub header: SfromHeader,
+    pub header_type: SfromType,
     pub rom_data: Vec<u8>,
-    // pub pcm_data: Option<Vec<u8>>,
-    // pub pcm_footer: Option<Vec<u8>>,
-    pub footer: SfromFooter,
-    pub game_tags: GameTagData,
+    pub footer: Option<SfromFooter>,
 }
 
 impl Sfrom {
-    pub fn parse_debug(input: &[u8]) -> IResult<&[u8], SfromHeader> {
-        let (input, header) = SfromHeader::parse(input)?;
-        Ok((input, header))
-    }
     pub fn parse(input: &[u8]) -> IResult<&[u8], Self> {
-        // First parse the header
-        let (_, header) = SfromHeader::parse(input)?;
-        
-        // println!("{:#?}", header);
-        
-        let rom_start = (header.rom_location & 0xFF) as usize;
-        let rom_end = (header.footer_location & 0xFF) as usize;
-        let rom_data = input[rom_start..rom_end].to_vec();
-        
-        // Parse footer starting from footer_location
-        let (remaining, footer) = SfromFooter::parse(&input[rom_end..])?;
-        
-        // Parse game tags from the remaining data
-        let (_, game_tags) = GameTagData::parse(remaining)?;
-        
-        
-        Ok((
-            &input[rom_end..],
-            Self {
-                header,
-                rom_data,
-                footer,
-                game_tags,
-            },
-        ))
+        let (_, header_type) = SfromType::from_bytes(input)?;
+        match header_type {
+            SfromType::Classic(ref header) => {
+                // Get the starting location of the ROM data
+                let rom_start = header.rom_location as usize;
+
+                let pcm_start = header.pcm_samples_location as usize;
+                let rom_data = input[rom_start..pcm_start].to_vec();
+                let pcm_data_end = header.pcm_footer_location as usize;
+
+                let pcm_data = input[pcm_start..pcm_data_end].to_vec();
+                let footer_start = header.footer_location as usize;
+
+                let pcm_footer_data = input[pcm_data_end..footer_start].to_vec();
+
+                let footer_data = input[footer_start..].to_vec();
+
+                // let footer_data = input[footer_start..].to_vec();
+
+                Ok((
+                    input,
+                    Self {
+                        header_type,
+                        rom_data,
+                        footer: None,
+                    },
+                ))
+            }
+            SfromType::NintendoSwitch(footer) => {
+                let rom_data = input[..input.len() - 8].to_vec();
+                Ok((
+                    input,
+                    Self {
+                        header_type: SfromType::NintendoSwitch(footer),
+                        rom_data,
+                        footer: None,
+                    },
+                ))
+            }
+        }
+    }
+}
+
+// SFROM parser is kinda weird and stuff but for now i just bother with the SFC converter
+
+#[derive(Debug)]
+pub struct Sfc {
+    pub rom_data: Vec<u8>,
+}
+impl Sfc {
+    pub fn parse(input: &[u8]) -> IResult<&[u8], Self> {
+        let rom_data = input.to_vec();
+        Ok((input, Self { rom_data }))
     }
 
-    // pub fn write<W: Write + Seek>(&self, writer: &mut W) -> io::Result<()> {
-    //     // Calculate all the necessary offsets and sizes first
-    //     let header_size = 0x30; // Standard header size
-    //     let rom_start = header_size;
-    //     let rom_end = rom_start + self.rom_data.len();
+    pub fn convert_to_switch(&self) -> Vec<u8> {
+        let mut modified_rom_data = self.rom_data.clone();
+        let mut footer = [
+            0x47, 0x02, 0x00, 0x00, 0x11, 0x10, 0x76, 0x91, 0x74, 0x06, 0x70, 0x02, 0x0C, 0x00,
+            0x00, 0x00, 0x43, 0x61, 0x6E, 0x31,
+        ];
+        modified_rom_data.extend_from_slice(&footer);
+        modified_rom_data
+    }
 
-    //     let (pcm_start, pcm_footer_start, footer_start) =
-    //         if let (Some(pcm), Some(pcm_footer)) = (&self.pcm_data, &self.pcm_footer) {
-    //             (
-    //                 rom_end,
-    //                 rom_end + pcm.len(),
-    //                 rom_end + pcm.len() + pcm_footer.len(),
-    //             )
-    //         } else {
-    //             (rom_end, rom_end, rom_end)
-    //         };
-
-    //     // Calculate game tags size
-    //     let mut game_tags_size = 0;
-    //     if self.game_tags.armet_threshold.is_some() {
-    //         game_tags_size += 4;
-    //     }
-    //     if let Some(data) = &self.game_tags.sdd1_data {
-    //         game_tags_size += 4 + data.len();
-    //     }
-    //     // ... calculate sizes for other tags ...
-
-    //     let total_size = footer_start + 0x23 + game_tags_size;
-
-    //     // Seek to start and write header
-    //     writer.seek(SeekFrom::Start(0))?;
-    //     writer.write_all(&0x100u32.to_le_bytes())?; // magic
-    //     writer.write_all(&(total_size as u32).to_le_bytes())?;
-    //     writer.write_all(&(rom_start as u32).to_le_bytes())?;
-    //     writer.write_all(&(pcm_start as u32).to_le_bytes())?;
-    //     writer.write_all(&(pcm_footer_start as u32).to_le_bytes())?;
-    //     writer.write_all(&(footer_start as u32).to_le_bytes())?;
-    //     writer.write_all(&self.header.sdd1_data_offset.to_le_bytes())?;
-    //     writer.write_all(&0u32.to_le_bytes())?; // reserved1
-    //     writer.write_all(&self.header.unknown1.to_le_bytes())?;
-    //     writer.write_all(&self.header.wiiu_game_id)?;
-    //     writer.write_all(&0u32.to_le_bytes())?; // reserved2
-
-    //     // Seek to ROM start and write ROM data
-    //     writer.seek(SeekFrom::Start(rom_start as u64))?;
-    //     writer.write_all(&self.rom_data)?;
-
-    //     // Write PCM data if present
-    //     if let (Some(pcm), Some(pcm_footer)) = (&self.pcm_data, &self.pcm_footer) {
-    //         writer.seek(SeekFrom::Start(pcm_start as u64))?;
-    //         writer.write_all(pcm)?;
-    //         writer.seek(SeekFrom::Start(pcm_footer_start as u64))?;
-    //         writer.write_all(pcm_footer)?;
-    //     }
-
-    //     // Seek to footer position and write footer
-    //     writer.seek(SeekFrom::Start(footer_start as u64))?;
-    //     writer.write_all(&[self.footer.fps])?;
-    //     writer.write_all(&self.footer.rom_size.to_le_bytes())?;
-    //     writer.write_all(&self.footer.pcm_samples_size.to_le_bytes())?;
-    //     writer.write_all(&self.footer.pcm_footer_size.to_le_bytes())?;
-    //     writer.write_all(&self.footer.preset_id.to_le_bytes())?;
-    //     writer.write_all(&[
-    //         self.footer.player_count,
-    //         self.footer.sound_volume,
-    //         self.footer.rom_type,
-    //         self.footer.enhancement_chip,
-    //     ])?;
-    //     writer.write_all(&self.footer.unknown1.to_le_bytes())?;
-    //     writer.write_all(&self.footer.unknown2.to_le_bytes())?;
-
-    //     // Write game tags immediately after footer
-    //     self.write_game_tags(writer)?;
-
-    //     Ok(())
-    // }
-
-    // fn write_game_tags<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-    //     // Write tags in order
-    //     if let Some(threshold) = &self.game_tags.armet_threshold {
-    //         writer.write_all(b"A")?;
-    //         writer.write_all(threshold)?;
-    //     }
-    //     if let Some(data) = &self.game_tags.sdd1_data {
-    //         writer.write_all(b"D")?;
-    //         writer.write_all(&(data.len() as u32).to_le_bytes()[0..3])?;
-    //         writer.write_all(data)?;
-    //     }
-    //     // ... write other tags ...
-
-    //     Ok(())
-    // }
-
-    // pub fn save_to_file(&self, path: &str) -> io::Result<()> {
-    //     let mut file = std::fs::File::create(path)?;
-
-    //     // Pre-allocate the file size
-    //     file.set_len(self.header.file_size as u64)?;
-
-    //     self.write(&mut file)
-    // }
+    pub fn convert_to_snes_mini(&self) -> Vec<u8> {
+        let modified_rom_data = self.rom_data.clone();
+        modified_rom_data
+    }
 }
